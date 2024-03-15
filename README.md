@@ -1,6 +1,6 @@
 # IEM23-24-Joulemeter
 
-Log for all iterations of code for joulemeter used for Imperial Eco Marathon. 
+FreeRTOS code for joulemeter. Writes to SD card and i2c display.
 
 Not a programmer, a hardware engineer. 
 
