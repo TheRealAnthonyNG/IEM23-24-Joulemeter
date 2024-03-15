@@ -36,9 +36,6 @@ const float wheelRadius=0.3; // Radius of rear wheel in meters (put real value h
 volatile unsigned long prevWheelRevolutions=0, wheelRevolutions=0; // wheel revolutions from interrupt
 volatile float totalDistance=0; // total distance travelled
 
-// energy and efficiency metric
-volatile float cumulativeEnergy = 0;
-
 // display config
 uint8_t g,b,t=0;
 uint8_t r = 255;
@@ -55,14 +52,12 @@ File dataFile;
 // baseline Filename
 const char baseFileName[] = "/ datalog";
 char* fullFileName;
-const uint8_t maxFiles = 10; // maximum number of files stored
+const uint8_t maxFiles = 50; // maximum number of files stored
 
-uint32_t writeIterations = 0;
+uint8_t writeIterations = 0;
 
-// freeRTOS
-SemaphoreHandle_t dataMutex; // mutex for synchronisation
 
-//======================== miscellaneous functions ====================================//
+//======================== diagnostic functions ====================================//
 const char* boolToString(bool value) {
     return value ? "true" : "false";
 } 
@@ -98,6 +93,7 @@ char* concatenateStrings(const char* str1, const char* str2) {
     return result;
 }
 
+
 //========================= helper functions =======================================//
 float InverseTI_Circuit(float R1, float R2, float R3, float R4, float Vref, float Vout){
   // manipulation of the TI circuit equation to estimate the input voltage
@@ -113,6 +109,7 @@ void handleInterrupt(){
 }
 
 //======================== SD card file generation ================================//
+
 void createNewFile(){
   for (uint8_t i=0; i<=maxFiles; i++){
     if(i == maxFiles) {
@@ -141,11 +138,8 @@ void createNewFile(){
   }
 }
 
-//===================== sampling ================================================//
-void samplePower(void *parameter){
-  (void)parameter; // suppress unused parameter compiler warning
 
-}
+
 
 void setup() {
 
@@ -272,7 +266,7 @@ void loop() {
 
 
 
-  delay(500);
+  delay(5000);
 
 
 
