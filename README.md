@@ -1,6 +1,6 @@
 # IEM23-24-Joulemeter
 
-FreeRTOS code for joulemeter. Writes to SD card and i2c display.
+Writes to SD card and i2c display.
 
 Made with platformio, can be run on arduino IDE once correct libraries installed.
 
