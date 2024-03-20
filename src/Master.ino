@@ -20,6 +20,7 @@ const uint8_t opt2 = A1; // all butons have pulldown resistors on PCB
 
 const uint8_t int1 = D6; // interrupt ports for distance tracking
 const uint8_t int2 = D7; // use either ADC2_CH4/6 or digital to detect
+const uint8_t simulatedInterrupt = D4; // need to simulate interrupts for distance calculation
 
 const uint8_t currentOCD = D10; // overcurrent detection for current sensor
 const uint8_t currentStandBy = D11; // standby (or EN) for current sensor
@@ -39,7 +40,7 @@ const float voltageR1=21.5,voltageR2=7.87,voltageR3=6.19,voltageR4=9.53; // R1,R
 const float voltageR5=160, voltageR6=10; // R5,R6 -> R3,R4 on PCB
 
 const float currentR1=28.7,currentR2=6.8,currentR3=7.32,currentR4=16.9; // R1,R2,R3,R4 -> R6,R8,R11,C9 on PCB
-const double current2VoltageStep = 23/750; // Current sensor voltage step per Ampere of current
+const double current2VoltageStep = 37.5/1.15; // Current sensor voltage step per Ampere of current
 
 // energy and efficiency metric
 float cumulativeEnergy = 0;
@@ -70,7 +71,8 @@ const uint8_t maxFiles = 50; // maximum number of files stored + 1
 
 uint32_t writeIterations = 0;
 
-float loggedCurrent, loggedVoltage, loggedPower, loggedEnergy, loggedEfficiency = 0;
+float loggedCurrent, loggedVoltage, loggedPower, loggedEnergy=0, loggedEfficiency = 0;
+float inputCurrent, calibratedCurrentMeasure;
 
 //======================== variable conversion for display ====================================//
 const char* boolToString(bool value) {
@@ -184,14 +186,17 @@ void setup() {
   pinMode(int1, INPUT); // external interrupt 1
   pinMode(int2, INPUT); // external interrupt 2
 
-  pinMode(currentOCD, INPUT); // overcurrent detection for current sensor - does nothing so far
+  //pinMode(currentOCD, INPUT); // overcurrent detection for current sensor - does nothing so far
   pinMode(currentStandBy, OUTPUT);
-  digitalWrite(currentStandBy, HIGH); // datasheet is actually quite shit and doesnt say anything about digital signals
+  digitalWrite(currentStandBy, LOW); // datasheet is actually quite shit and doesnt say anything about digital signals
   pinMode(currentMeasure, INPUT);
+
+  pinMode(simulatedInterrupt, INPUT_PULLUP);
 
   pinMode(voltageMeasure, INPUT);
 
-  attachInterrupt(digitalPinToInterrupt(13),handleInterrupt, RISING); // wheel revolution with hall-effect interrupt
+  attachInterrupt(digitalPinToInterrupt(int1),handleInterrupt, RISING); // wheel revolution with hall-effect interrupt
+  attachInterrupt(digitalPinToInterrupt(simulatedInterrupt),handleInterrupt, RISING);
  
   // GPIO based method to check if SD card is installed via DET pin
   const char* SDSTATE = boolToString(digitalRead(SPI_SD_DET));
@@ -253,14 +258,21 @@ void setup() {
 }
 
 void loop() { 
-  unsigned long prevTime = millis();
+  unsigned long prevTime = rtc.getSecond();
 
-  float calibratedCurrentMeasure = ADC_LUT[(int)analogRead(currentMeasure)];
-  calibratedCurrentMeasure = calibratedCurrentMeasure*(3.3/4095); // convert digital to a voltage
+  inputCurrent = 0;
+  for (int i =0; i<=100; i++){
+    calibratedCurrentMeasure = (3.3/4095)*ADC_LUT[analogRead(currentMeasure)];
 
-  float inputCurrent = InverseTI_Circuit(currentR1,currentR2,currentR3,currentR4,dac_voltage,calibratedCurrentMeasure);
-  inputCurrent = inputCurrent-1.65;
-  inputCurrent = inputCurrent/current2VoltageStep;
+    inputCurrent += abs(1.65-calibratedCurrentMeasure);
+    delay(100);
+  }
+
+  inputCurrent = (inputCurrent/100)*current2VoltageStep;
+
+  //float inputCurrent = calibratedCurrentMeasure;// = InverseTI_Circuit(currentR1,currentR2,currentR3,currentR4,dac_voltage,calibratedCurrentMeasure);
+  //inputCurrent = abs(1.65-inputCurrent);
+  //inputCurrent = inputCurrent;//current2VoltageStep;
   /*
     output voltage when 0 current = 1.65
     Maximum measurable primary current = +37.5
@@ -269,7 +281,7 @@ void loop() {
     So 15A would correspond to 0.46+1.65=2.11 V from ADC
     May appear Confusing!!!
   */
-  float calibratedVoltageMeasure = ADC_LUT[(int)analogRead(voltageMeasure)];
+  float calibratedVoltageMeasure = ADC_LUT[analogRead(voltageMeasure)];
   calibratedVoltageMeasure = calibratedVoltageMeasure*(3.3/4095);
 
   float inputVoltage = InverseTI_Circuit(voltageR1,voltageR2,voltageR3,voltageR4,dac_voltage,calibratedVoltageMeasure);
@@ -279,19 +291,20 @@ void loop() {
 
   loggedCurrent = inputCurrent;
   loggedVoltage = inputVoltage;
-  loggedPower = inputPower;
+  loggedPower = inputPower; // power in watts
 
-  unsigned long currentTime = millis();
+  unsigned long currentTime = rtc.getSecond();
 
-  float elapsedTime = (currentTime-prevTime)/1000; // time in seconds
-  loggedEnergy += (inputPower*elapsedTime)*3600000; // energy in kWh
+  float elapsedTime = (currentTime-prevTime); // time in seconds
+  Serial.println(elapsedTime*1000);
+  loggedEnergy += (inputPower*elapsedTime)/3600000; // energy in kWh
 
   unsigned long currentWheelRevolutions = wheelRevolutions;
   float incrementDistance = (2*3.1416*wheelRadius*(currentWheelRevolutions-prevWheelRevolutions))/1000; // distance in km
   totalDistance += incrementDistance;
   prevWheelRevolutions = currentWheelRevolutions;
 
-  if(totalDistance!=0){
+  if(totalDistance!=0 && loggedEnergy!=0){
     loggedEfficiency = totalDistance/loggedEnergy; // efficiency km/kwh
   }
   else {
@@ -350,6 +363,6 @@ void loop() {
 
   delete[] efficiency, energy; // deallocate memory for char* buffer
 
-  delay(100);
+  delay(1000);
 
 }

@@ -1,0 +1,185 @@
+//===================== sampling ================================================//
+void samplePower(void *parameter){
+  (void)parameter; // suppress unused parameter compiler warning
+
+  unsigned long prevTime = millis();
+
+  // adc calibration based on: https://github.com/e-tinkers/esp32-adc-calibrate/tree/master
+  int rawCurrentMeasure = analogRead(currentMeasure);
+  float calibratedCurrentMeasure = ADC_LUT[rawCurrentMeasure];
+  calibratedCurrentMeasure = calibratedCurrentMeasure*(3.3/4095); // convert digital into voltage
+
+  float inputCurrent = InverseTI_Circuit(currentR1,currentR2,currentR3,currentR4,dac_voltage,calibratedCurrentMeasure);
+  inputCurrent = inputCurrent - 1.65;
+  inputCurrent = inputCurrent/current2VoltageStep;
+  /*
+    output voltage when 0 current = 1.65
+    Maximum measurable primary current = +37.5
+    Vout-vref max = 1.15, 1.15+1.65=2.8
+    23/750 is the voltage step per A
+    So 15A would correspond to 0.46+1.65=2.11 V from ADC
+    May appear Confusing!!!
+  */
+
+ int rawVoltageMeasure = analogRead(voltageMeasure);
+ float calibratedVoltageMeasure = ADC_LUT[rawVoltageMeasure];
+ calibratedVoltageMeasure = calibratedVoltageMeasure*(3.3/4095);
+
+ float inputVoltage = InverseTI_Circuit(voltageR1,voltageR2,voltageR3,voltageR4,dac_voltage,calibratedVoltageMeasure);
+ inputVoltage = inputVoltage*((voltageR5+voltageR6)/voltageR6);
+
+ float inputPower = inputCurrent*inputVoltage;
+
+ if(xSemaphoreTake(dataMutex,portMAX_DELAY)) { // acquires mutex before sharing variables
+  loggedCurrent = inputCurrent;
+  loggedVoltage = inputVoltage;
+  loggedPower = inputPower;
+
+  unsigned long currentTime = millis();
+  float elapsedTime = (currentTime - prevTime)/1000; // obtain time and convert into seconds
+  loggedEnergy += (inputPower*elapsedTime)/3600000; // obtain energy and convert into kWh
+
+  unsigned long currentWheelRevolutions = wheelRevolutions;
+  float incrementDistance = (2*3.1416*wheelRadius * (currentWheelRevolutions - prevWheelRevolutions))/1000; // obtain distance travelled and convert into km
+  totalDistance += incrementDistance;
+  prevWheelRevolutions = currentWheelRevolutions;
+
+  if(totalDistance!=0){
+    loggedEfficiency = totalDistance/loggedEnergy; // obtain efficiency as km per kWh
+  }
+  else {
+    loggedEfficiency = 0; // avoids the divide by 0 error 
+  }
+
+  xSemaphoreGive(dataMutex); // release the mutex
+  vTaskDelay(pdMS_TO_TICKS(Ts)); // delay of Ts to achieve desired sampling frequency
+
+ }
+}
+//=============================== Data logging to SD card ====================================//
+void logData(void *parameter){
+  (void)parameter;
+
+  // will only write data to SD card if it is installed - can use SD_DET pin
+  if(digitalRead(SPI_SD_DET)) {
+
+    Serial.println("SD card present\n");
+
+    if(xSemaphoreTake(dataMutex,portMAX_DELAY)) { // acquires mutex before sharing variables
+      float exportedCurrent = loggedCurrent;
+      float exportedVoltage = loggedVoltage;
+      float exportedPower = loggedPower;
+      float exportedEnergy = loggedEnergy;
+      float exportedEfficiency = loggedEfficiency;
+      float exportedDistance = totalDistance;
+      
+      Serial.println(rtc.getTime());
+      Serial.println(exportedCurrent);
+      Serial.println(exportedVoltage);
+      Serial.println(exportedPower);
+      Serial.println(exportedEnergy);
+      Serial.println(exportedEfficiency);
+      Serial.println(exportedDistance);
+      Serial.println();
+
+      // write data to SD card as a .csv file
+      dataFile.print(rtc.getTime());
+      dataFile.print(",");
+      dataFile.print(exportedCurrent);
+      dataFile.print(",");
+      dataFile.print(exportedVoltage);
+      dataFile.print(",");
+      dataFile.print(exportedPower);
+      dataFile.print(",");
+      dataFile.print(exportedEnergy);
+      dataFile.print(",");
+      dataFile.print(exportedEfficiency);
+      dataFile.print(",");
+      dataFile.println(exportedDistance);
+      dataFile.flush(); // physically write data to SD card rather than hold within a buffer
+
+      Serial.println("Data logged successfully\n");
+
+      xSemaphoreGive(dataMutex); // release the mutex
+
+    }
+  }
+  else{
+    Serial.println("No SD card detected\n");
+  }
+  vTaskDelay(pdMS_TO_TICKS(writePeriod_sd));
+  /*
+  While data is sampled at 10 kHz, we don't want to write at 10 kHz as this will a) quickly fill up the storage on the card
+  b) consumes more resources to write at a high frequency and c) reduce the longevity of the sd card by placing it under more stress
+
+  So write at a lower frequency to preserve sd card health, while sampling data at a higher frequency (satisfying Nyquist theorem).
+  */
+}
+//================================ update display =============================================/
+void updateDisplay(void *parameter){
+  (void)parameter;
+
+  lcd.clear();
+
+  lcd.setCursor(0,0);
+  lcd.send_string("NRG:");
+
+  lcd.setCursor(0,1);
+  lcd.send_string("EFF:");
+
+  lcd.setCursor(13,0);
+  lcd.send_string("kWh");
+
+  lcd.setCursor(10,1);
+  lcd.send_string("km/kWh");
+
+  if(xSemaphoreTake(dataMutex,portMAX_DELAY)) {
+    float exportedEnergy = loggedEnergy;
+    float exportedEfficiency = loggedEfficiency;
+
+    char* energy = floatToChar(exportedEnergy);
+    char* efficiency = floatToChar(exportedEfficiency);
+
+    lcd.setCursor(4,0);
+    lcd.send_string(energy);
+
+    lcd.setCursor(4,1);
+    lcd.send_string(efficiency);
+
+    delete[] efficiency, energy; // deallocate memory for char* buffer
+
+    xSemaphoreGive(dataMutex);
+  }
+
+  vTaskDelay(pdMS_TO_TICKS(500));
+}
+
+xTaskCreatePinnedToCore(
+    samplePower, // function to be called
+    "Sample electrical parameters", // task name
+    1024, // stack size (bytes for ESP32, words for FreeRTOS)
+    NULL, // parameter to pass to function (pointer)
+    24, // task priority (0 to configMAX_PRIORITIES-1); 24 is highest and 0 is lowest priority
+    NULL, // task handle
+    0 // run on core x
+  );
+
+  xTaskCreatePinnedToCore(
+    logData,
+    "Data logging to SD card",
+    1024,
+    NULL,
+    22,
+    NULL,
+    1
+  );
+
+  xTaskCreatePinnedToCore(
+    updateDisplay,
+    "Updates i2c display",
+    1024,
+    NULL,
+    20,
+    NULL,
+    1
+  );
