@@ -9,6 +9,8 @@
 #include <ESP32Time.h>
 #include <cstdio>
 
+// would be great to use FreeRTOS for ESP32 but issues with SD card prevent this from happening
+
 // pin definitions
 const uint8_t dac_reference = D2; // reference voltage for TI compensation network
 
@@ -218,7 +220,7 @@ void setup() {
   lcd.send_string("IEM 23-24");
   lcd.setCursor(0,1);
   lcd.send_string("Joulemeter v2.0");
-  delay(5000);
+  delay(4000);
   lcd.clear(); // this clears the display
 
   // inform user if SD card is detected on the display
@@ -247,7 +249,7 @@ void setup() {
     return;    
   }
 
-  delay(3000);
+  delay(1500);
   
   createNewFile();
   Serial.print("Created file: ");
@@ -258,6 +260,9 @@ void setup() {
 }
 
 void loop() { 
+
+  // =============================================== measure voltage and current ==========================================================================
+
   unsigned long prevTime = rtc.getSecond();
 
   inputCurrent = 0;
@@ -320,7 +325,7 @@ void loop() {
   Serial.println(totalDistance);
   Serial.println();
 
-  // write data to SD card as a .csv file
+  // ================================================================================= write data to SD card as a .csv file ====================================================================
   dataFile.print(rtc.getTime());
   dataFile.print(",");
   dataFile.print(loggedCurrent);
@@ -338,31 +343,48 @@ void loop() {
 
   Serial.println("Data logged successfully\n");
 
+  // ================================================================================== display update ==========================================================================================
+
   lcd.clear();
 
+  // lcd.setCursor(0,0);
+  // lcd.send_string("NRG:");
+
+  // lcd.setCursor(0,1);
+  // lcd.send_string("EFF:");
+
+  // lcd.setCursor(13,0);
+  // lcd.send_string("kWh");
+
+  // lcd.setCursor(10,1);
+  // lcd.send_string("km/kWh");
+
+  // char* energy = floatToChar(loggedEnergy);
+  // char* efficiency = floatToChar(loggedEfficiency);
+
+  // lcd.setCursor(4,0);
+  // lcd.send_string(energy);
+
+  // lcd.setCursor(4,1);
+  // lcd.send_string(efficiency);
+
+  // delete[] efficiency, energy; // deallocate memory for char* buffer
+
+  char* current = floatToChar(loggedCurrent);
+  char* voltage = floatToChar(loggedVoltage);
+
   lcd.setCursor(0,0);
-  lcd.send_string("NRG:");
+  lcd.send_string("I (A):");
+
+  lcd.setCursor(10,0);
+  lcd.send_string(current);
 
   lcd.setCursor(0,1);
-  lcd.send_string("EFF:");
-
-  lcd.setCursor(13,0);
-  lcd.send_string("kWh");
-
+  lcd.send_string("V (V):");
+  
   lcd.setCursor(10,1);
-  lcd.send_string("km/kWh");
+  lcd.send_string(voltage);
 
-  char* energy = floatToChar(loggedEnergy);
-  char* efficiency = floatToChar(loggedEfficiency);
-
-  lcd.setCursor(4,0);
-  lcd.send_string(energy);
-
-  lcd.setCursor(4,1);
-  lcd.send_string(efficiency);
-
-  delete[] efficiency, energy; // deallocate memory for char* buffer
-
-  delay(1000);
+  delay(1000); // adjust accordingly - affects datalogging rate and display refresh rate
 
 }
